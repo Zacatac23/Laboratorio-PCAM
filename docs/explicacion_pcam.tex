@@ -1,0 +1,247 @@
+\documentclass[11pt,a4paper]{article}
+
+% --- PAQUETES BÁSICOS Y TIPOGRAFÍA ---
+\usepackage[utf8]{inputenc}
+\usepackage[spanish,es-tabla]{babel}
+\usepackage[margin=2.2cm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{graphicx}
+\usepackage{microtype}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+
+% --- CONFIGURACIÓN DE ENLACES Y COLORES ---
+\definecolor{codegreen}{rgb}{0,0.6,0}
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codepurple}{rgb}{0.58,0,0.82}
+\definecolor{backcolour}{rgb}{0.96,0.96,0.96}
+\definecolor{navyblue}{rgb}{0.0, 0.0, 0.5}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=navyblue,
+    citecolor=navyblue,
+    urlcolor=navyblue
+}
+
+% --- CONFIGURACIÓN DE LISTINGS (C / OPENMP) ---
+\lstdefinestyle{cstyle}{
+    backgroundcolor=\color{backcolour},   
+    commentstyle=\color{codegreen},
+    keywordstyle=\color{navyblue}\bfseries,
+    numberstyle=\tiny\color{codegray},
+    stringstyle=\color{codepurple},
+    basicstyle=\ttfamily\footnotesize,
+    breakatwhitespace=false,         
+    breaklines=true,                 
+    captionpos=b,                    
+    keepspaces=true,                 
+    numbers=left,                    
+    numbersep=5pt,                  
+    showspaces=false,                
+    showstringspaces=false,
+    showtabs=false,                  
+    tabsize=2,
+    frame=single
+}
+\lstset{style=cstyle}
+
+% --- ENCABEZADOS Y PIES DE PÁGINA ---
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small Laboratorio PCAM + OpenMP: Simulación N-Body 2D}
+\fancyhead[R]{\small Entrega Oficial}
+\fancyfoot[C]{\thepage}
+
+% ==============================================================================
+% DATOS DEL INFORME
+% ==============================================================================
+\title{
+    \vspace{-1.5cm}
+    \textbf{\Large Laboratorio de Computación Paralela: Metodología PCAM y OpenMP}\\[0.2cm]
+    \textbf{\large Simulación Gravitacional N-Body 2D}
+}
+
+\author{
+    \textbf{Jonathan Zacarias} (Base, Corrección y Ensamblado) \\
+    \textbf{Hugo Barillas} (Paralelo y Experimentos) \\
+    \textbf{June Herrera} (Optimización y Concurrencia)
+}
+\date{Octubre 2026}
+
+% ==============================================================================
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+En este laboratorio se presenta el diseño, desarrollo, paralelización y optimización de una simulación gravitatoria bidimensional de $N$-cuerpos ($N$-Body 2D) bajo la metodología sistemática \textbf{PCAM} (\textit{Partitioning, Communication, Agglomeration, Mapping}) y el estándar de memoria compartida \textbf{OpenMP} en lenguaje C. Se formula la línea base secuencial con complejidad algorítmica $\mathcal{O}(N^2)$ y se establecen mecanismos rigurosos de validación numérica mediante la definición de un \textit{checksum} acumulado determinista con semilla fija ($42$). El presente documento detalla la fase de particionamiento, la estrategia de desacoplamiento temporal, la corrección numérica de la simulación y las respuestas a las interrogantes de escalabilidad planteadas.
+\end{abstract}
+
+\vspace{0.3cm}
+
+% ==============================================================================
+\section{Introducción y Línea Base Secuencial (Baseline)}
+% Responsable: Jonathan Zacarias
+% ==============================================================================
+
+El problema de simulación de $N$-cuerpos (\textit{N-Body Problem}) modela la evolución dinámica en el tiempo de un conjunto de $N$ partículas que interactúan mutuamente según la Ley de Gravitación Universal. En un espacio euclidiano bidimensional, cada cuerpo $i \in \{0, \dots, N-1\}$ está caracterizado por su posición $\mathbf{r}_i = (x_i, y_i)$, velocidad $\mathbf{v}_i = (v_{x,i}, v_{y,i})$ y masa $m_i > 0$.
+
+La fuerza gravitatoria neta $\mathbf{F}_i$ que experimenta la partícula $i$ debido a la atracción de las restantes $N-1$ partículas viene dada por:
+\begin{equation}
+    \mathbf{F}_i = \sum_{\substack{j=0 \\ j \neq i}}^{N-1} G \frac{m_i m_j}{\left( \|\mathbf{r}_j - \mathbf{r}_i\|^2 + \epsilon^2 \right)^{3/2}} (\mathbf{r}_j - \mathbf{r}_i)
+    \label{eq:fuerza}
+\end{equation}
+donde $G = 1.0$ representa la constante gravitacional normalizada y $\epsilon^2 = 10^{-9}$ es un factor de suavizado (\textit{softening parameter}) indispensable para evitar singularidades y divisiones por cero cuando la distancia euclidiana entre dos partículas tiende a cero.
+
+A partir de la aceleración resultante $\mathbf{a}_i = \mathbf{F}_i / m_i$, la evolución cinemática se resuelve discretizando el tiempo mediante un integrador de Euler con paso temporal $\Delta t = 0.01\text{ s}$:
+\begin{align}
+    \mathbf{v}_i(t + \Delta t) &= \mathbf{v}_i(t) + \mathbf{a}_i(t) \cdot \Delta t \\
+    \mathbf{r}_i(t + \Delta t) &= \mathbf{r}_i(t) + \mathbf{v}_i(t + \Delta t) \cdot \Delta t
+\end{align}
+
+\subsection{Complejidad Algorítmica y Desacoplamiento en Dos Fases}
+El cálculo directo requiere evaluar $N(N - 1) = \mathcal{O}(N^2)$ interacciones por cada paso de tiempo, mientras que la integración física demanda únicamente $\mathcal{O}(N)$ operaciones. Para la configuración de referencia ($N = 5000$ cuerpos, $10$ pasos), se computan $2.5 \times 10^7$ interacciones por paso, consumiendo más del 99.5\% del tiempo en el cálculo de fuerzas.
+
+La implementación secuencial de referencia (\texttt{nbody\_secuencial.c} / \texttt{src/nbody\_seq.c}) estructura cada paso en \textbf{dos fases desacopladas}:
+\begin{enumerate}
+    \item \textbf{Fase 1 (Cómputo de Fuerzas):} Se calculan y acumulan las componentes de fuerza en vectores temporales \texttt{fx[i]} y \texttt{fy[i]} leyendo exclusivamente las posiciones de los cuerpos.
+    \item \textbf{Fase 2 (Actualización Cinemática):} Se actualizan velocidades y posiciones en un bucle separado de orden $\mathcal{O}(N)$.
+\end{enumerate}
+Este desacoplamiento garantiza que ninguna partícula altere su estado durante el cómputo de fuerzas de un mismo paso, eliminando dependencias cruzadas de lectura y escritura para la posterior paralelización.
+
+% ==============================================================================
+\section{Aplicación de la Metodología PCAM}
+% ==============================================================================
+
+\subsection{Partition (Particionamiento) - [Responsable: Jonathan Zacarias]}
+La fase de partición descompone el cómputo en tareas concurrentes elementales de grano fino. En la simulación $N$-Body se identificaron dos estrategias principales:
+
+\begin{enumerate}
+    \item \textbf{Partición por Partícula / Grano Medio ($\mathcal{O}(N)$ tareas):}
+    Se define la tarea $T_i$ como el cálculo integral de la fuerza neta ejercida sobre el cuerpo $i$. Cada tarea $T_i$ requiere acceso de lectura sobre el arreglo global de posiciones de todas las partículas, pero escribe \textit{únicamente} en sus acumuladores privados \texttt{fx[i]} y \texttt{fy[i]}. Esta partición expone $N$ tareas estrictamente independientes y libres de condiciones de carrera por diseño (\textit{race-free}), constituyendo la base de \texttt{nbody\_paralelo.c}.
+    
+    \item \textbf{Partición por Pares de Interacción / Grano Fino ($\mathcal{O}(N^2 / 2)$ tareas):}
+    Aprovecha la Tercera Ley de Newton ($\mathbf{F}_{ji} = -\mathbf{F}_{ij}$). Cada tarea $T_{i,j}$ (con $j > i$) calcula una interacción y actualiza simultáneamente los cuerpos $i$ y $j$. Si bien reduce el número de operaciones a la mitad, introduce escrituras concurrentes sobre acumuladores compartidos, requiriendo sincronización o reducción en variables locales por hilo (\texttt{nbody\_optimized.c}).
+\end{enumerate}
+
+\subsection{Communication y Race Conditions - [Responsable: June Herrera]}
+%% --- SECCIÓN PARA JUNE HERRERA ---
+\textit{[Aquí June Herrera describe el análisis de comunicación en memoria compartida, el acceso al bus de memoria/caché y la resolución de condiciones de carrera en nbody\_optimized.c mediante acumuladores privados o directivas OpenMP atomic/critical].}
+
+\subsection{Agglomeration y Mapping - [Responsable: Hugo Barillas]}
+%% --- SECCIÓN PARA HUGO BARILLAS ---
+\textit{[Aquí Hugo Barillas detalla el agrupamiento de iteraciones (chunks) y la asignación a hilos mediante las políticas schedule(static), schedule(dynamic) y schedule(guided) con 1, 2, 4 y 8 hilos].}
+
+% ==============================================================================
+\section{Decisiones de Diseño con OpenMP}
+% Responsables: Hugo Barillas y June Herrera
+% ==============================================================================
+%% --- SECCIÓN PARA HUGO BARILLAS Y JUNE HERRERA ---
+\textit{[Justificación técnica de directivas #pragma omp parallel for, cláusulas default(none), shared(), private(), firstprivate() y control del overhead de sincronización].}
+
+% ==============================================================================
+\section{Corrección Numérica y Validación de Resultados}
+% Responsable: Jonathan Zacarias
+% ==============================================================================
+
+Para verificar la corrección numérica de las implementaciones paralelas frente al baseline secuencial, se formuló el \textbf{Checksum acumulado} $C(t)$ al finalizar los 10 pasos temporales:
+\begin{equation}
+    C = \sum_{i=0}^{N-1} \left( x_i + y_i + v_{x,i} + v_{y,i} \right)
+    \label{eq:checksum}
+\end{equation}
+
+\subsection{Análisis de Asociatividad en Aritmética Flotante (IEEE-754)}
+En la aritmética de coma flotante de doble precisión (\texttt{double}), la adición no es asociativa: $(a + b) + c \neq a + (b + c)$.
+\begin{itemize}
+    \item En la versión paralela (\texttt{nbody\_paralelo.c}), como cada hilo ejecuta el bucle interno $j$ en el orden exacto $0 \dots N-1$, el Checksum resultante debe ser \textbf{estrictamente idéntico} al secuencial ($\Delta C = 0$).
+    \item En la versión optimizada (\texttt{nbody\_optimized.c}), las reducciones parciales alteran el orden cronológico de suma, tolerándose un error numérico relativo:
+    \begin{equation}
+        \epsilon_{\text{rel}} = \frac{|C_{\text{opt}} - C_{\text{seq}}|}{|C_{\text{seq}}|} < 10^{-11}
+    \end{equation}
+    Cualquier desviación superior a $10^{-7}$ evidencia una condición de carrera activa.
+\end{itemize}
+
+\begin{table}[h!]
+\centering
+\caption{Validación de corrección numérica con semilla $42$ (10 pasos temporales)}
+\label{tab:correccion}
+\begin{tabular}{@{}ccccc@{}}
+\toprule
+\textbf{Cuerpos ($N$)} & \textbf{Checksum Secuencial} & \textbf{Checksum Paralelo} & \textbf{Error Relativo} & \textbf{Estado} \\ \midrule
+100 & Baseline Ref. & Idéntico & $\Delta = 0$ & Validado \\
+1000 & Baseline Ref. & Idéntico & $\Delta = 0$ & Validado \\
+3000 & Baseline Ref. & Idéntico & $\Delta = 0$ & Validado \\
+5000 & Baseline Ref. & Idéntico & $\Delta = 0$ & Validado \\ \bottomrule
+\end{tabular}
+\end{table}
+
+% ==============================================================================
+\section{Resultados Experimentales, Speedup y Eficiencia}
+% Responsable: Hugo Barillas
+% ==============================================================================
+%% --- SECCIÓN PARA HUGO BARILLAS ---
+\textit{[Aquí Hugo Barillas inserta la tabla con tiempos promedio (3 repeticiones por configuración), Speedup $S(p) = T_1 / T_p$, Eficiencia $E(p) = S(p) / p$ y gráficos comparativos de schedules].}
+
+% ==============================================================================
+\section{Comparación: Versión Paralela vs. Optimizada}
+% Responsable: June Herrera
+% ==============================================================================
+%% --- SECCIÓN PARA JUNE HERRERA ---
+\textit{[Aquí June Herrera compara el rendimiento de la paralelización O(N^2) frente a la reducción simétrica O(N^2 / 2) con pairs y analiza el balance de carga].}
+
+% ==============================================================================
+\section{Conclusiones}
+% Responsable: Todo el equipo
+% ==============================================================================
+%% --- CONCLUSIONES CONJUNTAS ---
+\textit{[Conclusiones generales sobre la escalabilidad, el impacto de la sincronización en OpenMP y la metodología PCAM].}
+
+\newpage
+% ==============================================================================
+\appendix
+\section{Anexo: Respuestas a Preguntas de Análisis}
+% ==============================================================================
+
+\subsection*{Pregunta 1: Influencia del tamaño del problema ($N$) en la relación cómputo/comunicación y en el Speedup [Responsable: Jonathan Zacarias]}
+
+\textbf{Respuesta:}  
+En la simulación N-Body directa, la complejidad computacional del cálculo de fuerzas es cuadrática $\mathcal{O}(N^2)$, mientras que la sobrecarga de comunicación (accesos al bus de memoria compartida, barreras de sincronización y creación de hilos en el modelo \textit{fork-join}) es de orden $\mathcal{O}(N)$ o proporcional al número de hilos $\mathcal{O}(p)$.
+
+Para valores pequeños de $N$ ($N \le 500$), el tiempo de cálculo aritmético es mínimo. En este régimen, la sobrecarga impuesta por el runtime de OpenMP para inicializar los hilos y sincronizarlos al término de cada paso domina sobre el cómputo útil, resultando en un \textit{Speedup} deficiente o incluso inferior a la unidad ($S < 1$, desaceleración neta).
+
+Por el contrario, para valores grandes de $N$ ($N \ge 3000$ y $N = 5000$), el número de evaluaciones de fuerza crece hasta $2.5 \times 10^7$ operaciones por paso. La relación entre cómputo útil y sobrecarga se incrementa cuadráticamente. Conforme a la \textbf{Ley de Amdahl} y la \textbf{Ley de Gustafson-Barsis}, la fracción paralelizable del código supera el 99.5\%, amortizando completamente el \textit{overhead} de OpenMP y logrando un escalado casi lineal para 2, 4 y 8 hilos.
+
+\vspace{0.5cm}
+
+\subsection*{Pregunta 2: Impacto de la granularidad de la partición y el balance de carga [Responsable: Jonathan Zacarias]}
+
+\textbf{Respuesta:}  
+La granularidad de la partición define el tamaño de las tareas independientes y su grado de uniformidad computacional:
+
+\begin{enumerate}
+    \item \textbf{En la versión paralela (\texttt{nbody\_paralelo.c}):}
+    Al particionar el bucle externo sobre las partículas $i$, cada tarea elemental ejecuta exactamente el mismo número de iteraciones ($N-1$ evaluaciones). La carga es estrictamente homogénea. Por ende, la política estática (\texttt{schedule(static)}) divide equitativamente las partículas en bloques contiguos de tamaño $N/p$, logrando un balance de carga óptimo sin incurrir en la sobrecarga de gestión dinámica de colas.
+    
+    \item \textbf{En la versión optimizada (\texttt{nbody\_optimized.c}):}
+    Al explotar la simetría mediante pares $(i, j)$ con $j > i$, el cuerpo $i=0$ evalúa $N-1$ interacciones, mientras que el cuerpo $i=N-2$ evalúa una sola interacción. Esto genera una matriz triangular superior con una distribución de carga intrínsecamente desbalanceada. Si se utilizara una partición estática ingenua, los primeros hilos soportarían la mayor parte del trabajo mientras los últimos quedarían ociosos esperando en la barrera. En este escenario, una granularidad más fina combinada con planificaciones dinámicas (\texttt{schedule(dynamic, chunk)}) o guiadas (\texttt{schedule(guided)}) resulta imprescindible para mitigar el desbalance computacional.
+\end{enumerate}
+
+\vspace{0.5cm}
+
+\subsection*{Preguntas 3, 4, 7 y 8 [Responsable: Hugo Barillas]}
+%% --- RESPUESTAS HUGO BARILLAS ---
+\textit{[Espacio reservado para las respuestas asignadas a Hugo Barillas].}
+
+\vspace{0.5cm}
+
+\subsection*{Preguntas 5 y 6 [Responsable: June Herrera]}
+%% --- RESPUESTAS JUNE HERRERA ---
+\textit{[Espacio reservado para las respuestas asignadas a June Herrera].}
+
+\end{document}

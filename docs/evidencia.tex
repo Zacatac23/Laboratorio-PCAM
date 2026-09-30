@@ -1,0 +1,71 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[spanish,es-tabla]{babel}
+\usepackage[margin=2cm]{geometry}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{fancyhdr}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small Evidencias de Compilación y Ejecución - N-Body 2D}
+\fancyhead[R]{\small Jonathan Zacarias (Ensamblado)}
+\fancyfoot[C]{\thepage}
+
+\title{
+    \vspace{-1.5cm}
+    \textbf{\Large Documento de Evidencia Experimental}\\[0.2cm]
+    \textbf{\large Laboratorio PCAM + OpenMP: N-Body 2D}
+}
+\author{\textbf{Jonathan Zacarias, Hugo Barillas, June Herrera}\\ (Ensamblado por Jonathan Zacarias)}
+\date{Octubre 2026}
+
+\begin{document}
+
+\maketitle
+
+\section{Información del Hardware de Pruebas (Una Sola Máquina)}
+\begin{itemize}
+    \item \textbf{Procesador (CPU):} [Insertar modelo, ej. Intel Core i7 / AMD Ryzen]
+    \item \textbf{Núcleos físicos / Lógicos:} [Ej. 8 núcleos / 16 hilos]
+    \item \textbf{Memoria RAM:} [Ej. 16 GB DDR4]
+    \item \textbf{Sistema Operativo:} [Ej. Ubuntu 22.04 LTS / Windows 11 WSL2]
+    \item \textbf{Compilador:} \texttt{gcc (GCC) -O2 -fopenmp}
+\end{itemize}
+
+\section{Capturas de Compilación}
+% \begin{figure}[h!]
+% \centering
+% \includegraphics[width=0.85\textwidth]{evidence/compilacion.png}
+% \caption{Compilación limpia sin advertencias de las tres versiones con gcc -O2 -fopenmp}
+% \end{figure}
+
+\section{Capturas de Ejecución y Tiempos}
+
+\subsection{Versión Secuencial (Baseline)}
+% \begin{figure}[h!]
+% \centering
+% \includegraphics[width=0.85\textwidth]{evidence/ejecucion_secuencial.png}
+% \caption{Ejecución de nbody_secuencial con N=5000, 10 pasos, seed=42}
+% \end{figure}
+
+\subsection{Versión Paralela (OpenMP)}
+% \begin{figure}[h!]
+% \centering
+% \includegraphics[width=0.85\textwidth]{evidence/ejecucion_paralelo.png}
+% \caption{Ejecución de nbody_paralelo con 1, 2, 4 y 8 hilos}
+% \end{figure}
+
+\subsection{Versión Optimizada}
+% \begin{figure}[h!]
+% \centering
+% \includegraphics[width=0.85\textwidth]{evidence/ejecucion_optimizada.png}
+% \caption{Ejecución de nbody_optimized validando el Checksum}
+% \end{figure}
+
+\section{Tabla Resumen de Experimentos}
+% \input{tabla_experimentos.tex} o pegar tabla de results.csv
+
+\end{document}
