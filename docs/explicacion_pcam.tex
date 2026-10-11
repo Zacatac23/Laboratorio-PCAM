@@ -136,14 +136,30 @@ La fase de partición descompone el cómputo en tareas concurrentes elementales 
 
 \subsection{Agglomeration y Mapping - [Responsable: Hugo Barillas]}
 %% --- SECCIÓN PARA HUGO BARILLAS ---
-\textit{[Aquí Hugo Barillas detalla el agrupamiento de iteraciones (chunks) y la asignación a hilos mediante las políticas schedule(static), schedule(dynamic) y schedule(guided) con 1, 2, 4 y 8 hilos].}
+\textbf{Agglomeration.} Asignar cada tarea $T_i$ por separado haría que el costo de repartirlas pese demasiado, así que las iteraciones consecutivas del ciclo sobre $i$ se agrupan en bloques de tamaño \texttt{chunk}. Se comparan tres granularidades con \texttt{static} y 8 hilos: \texttt{chunk} por defecto (un bloque de $N/p = 625$ cuerpos por hilo), 64 y 8. Un bloque más pequeño reparte el trabajo de forma más fina, pero implica más bloques que administrar y más bordes compartidos en \texttt{fx[]}/\texttt{fy[]} (\textit{false sharing}). Como cada bloque de 8 cuerpos ya contiene $8 \times 4999 \approx 4\times10^4$ interacciones, el costo de administrar bloques es despreciable. Con \texttt{static}, el chunk cambia el tiempo menos que la variación entre corridas; con \texttt{dynamic}, en cambio, el chunk 8 superó al 64 (Tabla~\ref{tab:experimentos} y pregunta 3). Además, las dos fases de cada paso (fuerzas e integración) se aglomeran dentro de \textbf{una sola región paralela}, de modo que el equipo de hilos se crea una sola vez y no en cada paso.
+
+\textbf{Mapping.} Los bloques se asignan a los hilos con \texttt{schedule(runtime)}, y la política se elige por línea de comandos sin recompilar:
+\begin{itemize}
+    \item \texttt{static}: asignación fija y sin costo durante la ejecución. A priori es la mejor opción, porque cada $T_i$ cuesta exactamente $N-1$ interacciones.
+    \item \texttt{dynamic}: cada hilo pide un bloque nuevo al terminar el anterior. Cuesta una operación de sincronización por bloque, pero compensa diferencias de velocidad entre hilos que no vienen del algoritmo sino del hardware: núcleos con distinta frecuencia turbo, dos hilos de \textit{hyperthreading} en un mismo núcleo y procesos del sistema operativo.
+    \item \texttt{guided}: empieza con bloques grandes y los reduce progresivamente.
+\end{itemize}
+La fase de integración, de costo $\mathcal{O}(1)$ por cuerpo, siempre usa \texttt{schedule(static)}.
 
 % ==============================================================================
 \section{Decisiones de Diseño con OpenMP}
 % Responsables: Hugo Barillas y June Herrera
 % ==============================================================================
 %% --- SECCIÓN PARA HUGO BARILLAS Y JUNE HERRERA ---
-\textit{[Justificación técnica de directivas #pragma omp parallel for, cláusulas default(none), shared(), private(), firstprivate() y control del overhead de sincronización].}
+\textbf{Versión paralela directa (\texttt{nbody\_paralelo.c}).}
+\begin{itemize}
+    \item \textbf{Una sola región \texttt{\#pragma omp parallel}} cubre todo el ciclo temporal, con dos \texttt{\#pragma omp for} por paso, en lugar de abrir un \texttt{parallel for} en cada paso. Así se evita pagar el \textit{fork-join} en cada paso.
+    \item \textbf{\texttt{default(none)}} obliga a declarar el alcance de cada variable. Son \texttt{shared}: \texttt{bodies}, \texttt{fx}, \texttt{fy}, \texttt{n}, \texttt{steps} y \texttt{threads\_used}. Son privadas, por estar declaradas dentro de la región: \texttt{step}, \texttt{i}, \texttt{j}, los acumuladores \texttt{fxi} y \texttt{fyi}, y los temporales (\texttt{dx}, \texttt{dy}, \texttt{dist}, \ldots). No hace falta \texttt{firstprivate}.
+    \item \textbf{Sin condiciones de carrera.} En la fase de fuerzas, la iteración $i$ solo escribe \texttt{fx[i]} y \texttt{fy[i]}, y \texttt{bodies[]} es de solo lectura. En la integración, la iteración $i$ solo modifica \texttt{bodies[i]}. Por eso no se necesitan \texttt{atomic}, \texttt{critical} ni \texttt{reduction}.
+    \item \textbf{Barreras implícitas} al final de cada \texttt{omp for} (sin \texttt{nowait}). La primera asegura que todas las fuerzas estén calculadas antes de mover cualquier cuerpo. La segunda evita que un hilo empiece el paso siguiente con posiciones a medio actualizar.
+    \item La directiva \texttt{\#pragma omp single} registra, con \texttt{omp\_get\_num\_threads()}, los hilos que el runtime entregó realmente; se imprimen junto con los solicitados.
+    \item El tiempo se mide con \texttt{omp\_get\_wtime()} y abarca solo la simulación. Como cada $T_i$ suma sobre $j$ en el mismo orden que la versión secuencial, el checksum es idéntico bit a bit en todas las configuraciones (verificado con 17 dígitos significativos).
+\end{itemize}
 
 % ==============================================================================
 \section{Corrección Numérica y Validación de Resultados}
@@ -186,7 +202,14 @@ En la aritmética de coma flotante de doble precisión (\texttt{double}), la adi
 % Responsable: Hugo Barillas
 % ==============================================================================
 %% --- SECCIÓN PARA HUGO BARILLAS ---
-\textit{[Aquí Hugo Barillas inserta la tabla con tiempos promedio (3 repeticiones por configuración), Speedup $S(p) = T_1 / T_p$, Eficiencia $E(p) = S(p) / p$ y gráficos comparativos de schedules].}
+% Tabla generada por scripts/analyze_results.py a partir de results.csv.
+Cada configuración se ejecutó 5 veces ($\geq 3$ exigidas), con $N = 5000$, 10 pasos y semilla 42, en un Intel Core i7-1165G7 (4 núcleos físicos, 8 lógicos) conectado a la corriente. Las repeticiones se \textbf{intercalan}: cada ronda recorre todas las configuraciones, para que la deriva térmica y de frecuencia de la laptop afecte a todas por igual. Antes de la primera ronda se hace una corrida de calentamiento que se descarta. La Tabla~\ref{tab:experimentos} reporta el promedio $\bar{T}$, la desviación estándar $\sigma$, $S(p) = T_1/T_p$, $E(p) = S(p)/p$ y la fracción serial experimental de Karp-Flatt, $e_{KF} = \frac{1/S - 1/p}{1 - 1/p}$, con $T_1$ el promedio de la versión secuencial. Todas las corridas reproducen exactamente el checksum secuencial (error relativo $0$).
+
+\input{tabla_experimentos.tex}
+
+\textbf{Escalabilidad.} Con \texttt{static}: $S(2)=1.65$, $S(4)=2.39$ y $S(8)=3.27$, es decir, $E = 0.83$, $0.60$ y $0.41$. La versión paralela con 1 hilo tarda lo mismo que la secuencial ($S = 1.00$), así que crear la región paralela y pasar por las barreras no cuesta nada medible. Además, $e_{KF}$ se mantiene casi constante ($\approx 0.21$) entre 2 y 8 hilos. Si la pérdida viniera de sincronización u overhead de OpenMP, $e_{KF}$ crecería con $p$. Por lo tanto, la pérdida es un costo aproximadamente fijo de usar más de un núcleo en este equipo: en una laptop los núcleos comparten el presupuesto de potencia y temperatura, y la frecuencia por núcleo baja con la carga. De 4 a 8 hilos se gana solo $1.37\times$, porque los hilos 5 a 8 son de \textit{hyperthreading} y comparten las unidades de punto flotante de núcleos ya ocupados.
+
+\textbf{Schedules con 8 hilos.} El mejor resultado fue \texttt{dynamic} con chunk 8: $0.474$~s ($S = 3.77$), contra $0.542$--$0.570$~s de \texttt{static} y $0.537$~s de \texttt{guided}. La diferencia (13\,\%) es mayor que dos desviaciones estándar. La carga algorítmica es uniforme, pero los hilos no avanzan a la misma velocidad: con \texttt{static}, cada paso termina cuando acaba el hilo más lento, mientras que con \texttt{dynamic} los hilos más rápidos toman más bloques. Esto también explica el menor $e_{KF}$ de \texttt{dynamic} (0.16 frente a 0.21).
 
 % ==============================================================================
 \section{Comparación: Versión Paralela vs. Optimizada}
@@ -236,9 +259,17 @@ La granularidad de la partición define el tamaño de las tareas independientes 
 
 \subsection*{Preguntas 3, 4, 7 y 8 [Responsable: Hugo Barillas]}
 %% --- RESPUESTAS HUGO BARILLAS ---
-\textit{[Espacio reservado para las respuestas asignadas a Hugo Barillas].}
+\textbf{Pregunta 3. ¿Qué efecto tuvo el chunk size sobre el rendimiento? Relaciónelo con Agglomeration.}
+Con \texttt{static} y 8 hilos, el chunk por defecto (625), 8 y 64 dieron 0.547, 0.542 y 0.570~s. Las diferencias son menores que la desviación entre corridas (0.03--0.05~s), así que ahí el chunk no influye de forma medible: aun con chunk 8, cada bloque agrupa unas $4\times10^4$ interacciones y el costo de administrarlo nunca domina. Con \texttt{dynamic} el chunk sí importó: chunk 8 tardó 0.474~s y chunk 64, 0.519~s ($\sigma \approx 0.03$). Con chunk 64 solo hay $5000/64 \approx 78$ bloques para 8 hilos; al final de cada paso, un hilo puede quedarse con un último bloque de 64 cuerpos mientras los demás esperan en la barrera. Con chunk 8, ese residuo es 8 veces menor. En términos de Agglomeration, conviene agrupar lo suficiente para que el reparto no domine, pero dejar bloques lo bastante finos para que el balance dinámico funcione. Con este $N$, un chunk de 8 cumple ambas condiciones.
 
-\vspace{0.5cm}
+\textbf{Pregunta 4. Compare static, dynamic y guided. ¿Cuál funcionó mejor y qué evidencia lo respalda?}
+\texttt{dynamic} (chunk 8) fue el mejor: $0.474 \pm 0.028$~s, $S = 3.77$, frente a \texttt{static} ($0.542$--$0.570$~s, $S \le 3.30$) y \texttt{guided} ($0.537 \pm 0.049$~s, $S = 3.33$). La diferencia supera dos desviaciones estándar, y la tendencia se repitió en una corrida previa independiente de 3 repeticiones. Con \texttt{dynamic}, $e_{KF}$ baja de $\approx 0.21$ a $0.16$, lo que indica que \texttt{static} perdía tiempo por desbalance. Aunque cada cuerpo cuesta lo mismo ($N-1$ interacciones), los hilos no corren a la misma velocidad: dos hilos de hyperthreading comparten un núcleo, la frecuencia varía y el sistema operativo interrumpe. \texttt{static} no puede compensarlo y \texttt{dynamic} sí, con un costo de scheduling despreciable. \texttt{guided} empieza con bloques grandes que fijan la mayor parte del reparto, por lo que se comporta casi como \texttt{static}.
+
+\textbf{Pregunta 7. Speedup y Efficiency para 2, 4 y 8 threads. ¿Dónde dejó de escalar linealmente?}
+Con \texttt{static}: $S(2)=1.65$, $E(2)=0.83$; $S(4)=2.39$, $E(4)=0.60$; $S(8)=3.27$, $E(8)=0.41$. Con \texttt{dynamic} (chunk 8), $S(8)=3.77$ y $E(8)=0.47$. El escalamiento deja de ser lineal desde 2 hilos, no por overhead de OpenMP (paralelo con 1 hilo da $S=1.00$ y $e_{KF}$ no crece con $p$), sino porque cada núcleo adicional rinde menos que el primero en esta laptop (potencia y temperatura compartidas). La pendiente cae aún más de 4 a 8 hilos ($1.37\times$), al pasar de núcleos físicos a hilos de hyperthreading.
+
+\textbf{Pregunta 8. Con 64 cores, ¿esperaría 8 veces el rendimiento obtenido con 8 threads?}
+No. Si se toma la fracción no paralelizable medida, $e_{KF} \approx 0.16$--$0.21$, la ley de Amdahl da $S(64) = 1/(e + (1-e)/64) \approx 4.5$--$5.8$, apenas $1.4$--$1.5$ veces el $S(8)$ obtenido y muy lejos de 8 veces. Esa extrapolación es pesimista, porque buena parte de nuestro $e_{KF}$ viene de limitaciones de la laptop (potencia, frecuencia y hyperthreading) que un servidor con 64 núcleos físicos reduciría. Aun así, hay límites que no desaparecen. Con $N = 5000$ y 64 hilos cada hilo recibe unos 78 cuerpos por paso, así que las 20 barreras y el desbalance del último bloque pesan proporcionalmente más. Además, el ancho de banda de memoria y la caché compartida no crecen al mismo ritmo que los núcleos. Para acercarse a un escalamiento lineal con 64 núcleos habría que aumentar $N$ (escalamiento de Gustafson), de modo que el trabajo $\mathcal{O}(N^2)$ crezca más rápido que los costos fijos de sincronización.
 
 \subsection*{Preguntas 5 y 6 [Responsable: June Herrera]}
 %% --- RESPUESTAS JUNE HERRERA ---

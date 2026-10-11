@@ -67,6 +67,12 @@ make bin/nbody_seq
    gcc -O2 -fopenmp nbody_secuencial.c -o nbody_secuencial -lm
    ```
 
+3. **Compilar la versión paralela (Persona B):**
+   ```bash
+   gcc -O2 -fopenmp src/nbody_parallel.c -o bin/nbody_parallel -lm   # desarrollo
+   gcc -O2 -fopenmp nbody_paralelo.c -o nbody_paralelo -lm           # entregable Canvas
+   ```
+
 ---
 
 ## 4. Instrucciones de Ejecución y Parámetros
@@ -101,6 +107,23 @@ Los ejecutables aceptan hasta 5 argumentos posicionales por línea de comandos:
   ./nbody_secuencial 5000 10 1 sequential 0
   ```
 
+- **Versión paralela** (`schedule` = `static` | `dynamic` | `guided`; `chunk` = 0 usa el valor por defecto de OpenMP):
+  ```bash
+  ./bin/nbody_parallel 5000 10 8 dynamic 8
+  ./nbody_paralelo 5000 10 8 static 0
+  ```
+
+### Experimentos de rendimiento (Persona B)
+
+```bash
+bash scripts/run_experiments.sh          # N=5000, 10 pasos, 5 repeticiones -> results.csv
+python scripts/analyze_results.py        # -> results_summary.csv, docs/tabla_experimentos.{md,tex}
+```
+
+- `run_experiments.sh` compila desde cero, hace una corrida de calentamiento que se descarta y ejecuta la secuencial y las configuraciones paralelas (1/2/4/8 hilos con `static`; con 8 hilos `static` chunk 8/64, `dynamic` 8/64 y `guided`). Las repeticiones se **intercalan** (ronda 1 de todas las configuraciones, luego ronda 2, …) para que la deriva térmica afecte a todas por igual. Si existe `src/nbody_optimized.c`, también lo mide.
+- `results.csv` guarda **cada corrida** (columna `rep`). `analyze_results.py` calcula el promedio, la desviación estándar, $S(p)=T_1/T_p$, $E(p)=S(p)/p$, la fracción serial de Karp-Flatt y el error del checksum frente al secuencial.
+- En laptop: conectar el cargador y cerrar otros programas antes de medir.
+
 ---
 
 ## 5. Salida del Programa y Formato de Registro
@@ -121,11 +144,11 @@ El programa produce un resumen formateado en pantalla y una línea CSV para alim
   Chunk size           : 0
   Procesadores disp.   : 8
   Max hilos OpenMP     : 8
-  Tiempo de ejecucion  : 1.482910 segundos
-  Checksum final       : 4.8219481920e+04
+  Tiempo de ejecucion  : 1.482000 segundos
+  Checksum final       : -4.0266058332e+004
 =================================================================
 CSV_HEADER: version,N,steps,seed,threads_req,threads_used,schedule,chunk,procs,max_threads,time_sec,checksum
-CSV_ROW: nbody_secuencial (A),5000,10,42,1,1,sequential,0,8,8,1.482910,4.8219481920e+04
+CSV_ROW: nbody_secuencial (A),5000,10,42,1,1,sequential,0,8,8,1.482000,-4.0266058332e+004
 ```
 
 ---

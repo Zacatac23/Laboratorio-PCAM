@@ -1,0 +1,11 @@
+version,threads,schedule,chunk,reps,time_mean_s,time_sd_s,speedup,efficiency,karp_flatt,checksum_rel_err
+nbody_secuencial,1,sequential,default,5,1.7878,0.2449,1.000,1.000,,0.00e+00
+nbody_paralelo,1,static,default,5,1.7814,0.1678,1.004,1.004,,0.00e+00
+nbody_paralelo,2,static,default,5,1.0824,0.0872,1.652,0.826,0.2109,0.00e+00
+nbody_paralelo,4,static,default,5,0.7484,0.0545,2.389,0.597,0.2248,0.00e+00
+nbody_paralelo,8,static,default,5,0.5472,0.0253,3.267,0.408,0.2069,0.00e+00
+nbody_paralelo,8,static,8,5,0.5420,0.0310,3.299,0.412,0.2036,0.00e+00
+nbody_paralelo,8,static,64,5,0.5700,0.0476,3.136,0.392,0.2215,0.00e+00
+nbody_paralelo,8,dynamic,8,5,0.4740,0.0276,3.772,0.471,0.1601,0.00e+00
+nbody_paralelo,8,dynamic,64,5,0.5186,0.0253,3.447,0.431,0.1887,0.00e+00
+nbody_paralelo,8,guided,default,5,0.5368,0.0489,3.330,0.416,0.2003,0.00e+00
