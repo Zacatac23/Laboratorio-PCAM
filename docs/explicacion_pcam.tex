@@ -132,7 +132,13 @@ La fase de partición descompone el cómputo en tareas concurrentes elementales 
 
 \subsection{Communication y Race Conditions - [Responsable: June Herrera]}
 %% --- SECCIÓN PARA JUNE HERRERA ---
-\textit{[Aquí June Herrera describe el análisis de comunicación en memoria compartida, el acceso al bus de memoria/caché y la resolución de condiciones de carrera en nbody\_optimized.c mediante acumuladores privados o directivas OpenMP atomic/critical].}
+\textbf{Lecturas compartidas.} En la fase de fuerzas todas las tareas leen posición y masa de los $N$ cuerpos (\texttt{bodies[]}, $5000 \times 40$~B $\approx 200$~KB, cabe en la caché L2 de cada núcleo) y ninguna los escribe. En memoria compartida esa es toda la comunicación: no hay mensajes, cada núcleo trae las líneas de caché de \texttt{bodies[]} una vez por paso.
+
+\textbf{Escrituras y riesgo de carrera.} En la versión directa, $T_i$ escribe solo \texttt{fx[i]} y \texttt{fy[i]}, y la integración solo \texttt{bodies[i]}: escrituras disjuntas. En la optimizada, $T_i$ escribe la fuerza de $i$ \emph{y la de todo} $j > i$. Dos hilos con filas $i_1 < i_2$ actualizan a la vez \texttt{fx[j]} para todo $j > i_2$, y \texttt{fx[j] -= f} es leer-sumar-escribir: si ambas lecturas ocurren antes que ambas escrituras, una contribución se pierde. Lo comprobamos: al quitar los \texttt{atomic} de esa variante, el checksum con 8 hilos se desvía entre 0.6\,\% y 3\,\% y cambia en cada corrida.
+
+\textbf{Puntos de sincronización.} Cada paso tiene dos dependencias: ninguna posición puede cambiar hasta tener todas las fuerzas (si no, un hilo leería un \texttt{bodies[j]} ya movido), y el paso $t+1$ necesita todas las posiciones del paso $t$. Ambas se cubren con la barrera implícita de cada \texttt{omp for}. La optimizada añade un tercer punto: combinar los acumuladores de los hilos.
+
+\textbf{Resolución.} Elegimos \textbf{acumuladores privados por hilo}: el hilo $t$ escribe solo en su fila \texttt{fx[t][0..N-1]}, así que durante el cálculo no hay ninguna escritura compartida. Después de la barrera, la fuerza de cada cuerpo se obtiene sumando las $p$ filas en orden fijo. Cuesta $p \times N \times 16$~B (640~KB con 8 hilos) y $\mathcal{O}(pN)$ sumas por paso, despreciables frente a las $N(N-1)/2 \approx 1.25 \times 10^7$ interacciones. Implementamos también \texttt{atomic} y \texttt{critical} para justificar la elección con mediciones (Sección~\ref{sec:comparacion}).
 
 \subsection{Agglomeration y Mapping - [Responsable: Hugo Barillas]}
 %% --- SECCIÓN PARA HUGO BARILLAS ---
@@ -159,6 +165,16 @@ La fase de integración, de costo $\mathcal{O}(1)$ por cuerpo, siempre usa \text
     \item \textbf{Barreras implícitas} al final de cada \texttt{omp for} (sin \texttt{nowait}). La primera asegura que todas las fuerzas estén calculadas antes de mover cualquier cuerpo. La segunda evita que un hilo empiece el paso siguiente con posiciones a medio actualizar.
     \item La directiva \texttt{\#pragma omp single} registra, con \texttt{omp\_get\_num\_threads()}, los hilos que el runtime entregó realmente; se imprimen junto con los solicitados.
     \item El tiempo se mide con \texttt{omp\_get\_wtime()} y abarca solo la simulación. Como cada $T_i$ suma sobre $j$ en el mismo orden que la versión secuencial, el checksum es idéntico bit a bit en todas las configuraciones (verificado con 17 dígitos significativos).
+\end{itemize}
+
+\textbf{Versión optimizada (\texttt{nbody\_optimized.c}).} Conserva la región paralela única, \texttt{default(none)} y \texttt{schedule(runtime)} de la directa. Lo que cambia:
+\begin{itemize}
+    \item \textbf{Ciclo triangular} \texttt{for (j = i+1; j < n; j++)}: cada par se calcula una vez y se suma a $i$ y, con signo opuesto, a $j$. La fila $i$ tiene $N-1-i$ interacciones, así que la carga ya no es uniforme.
+    \item \textbf{Variables nuevas}: \texttt{estrategia} es \texttt{shared}; \texttt{t} (número de hilo) y \texttt{mfx}, \texttt{mfy} (punteros a la fila propia) son privados por estar declarados dentro de la región.
+    \item \textbf{Limpieza sin barrera}: cada hilo pone en cero su propia fila con \texttt{memset}. No hace falta barrera antes de las fuerzas, porque en esa fase cada hilo solo toca su fila.
+    \item \textbf{Reducción fusionada con la integración}: un único \texttt{omp for} suma las filas de los hilos para el cuerpo $k$ y lo integra. Así se ahorra una barrera por paso. La barrera final impide que un hilo limpie su fila mientras otro todavía la está sumando.
+    \item Las tres estrategias (\texttt{privado}, \texttt{atomic}, \texttt{critical}) son ciclos separados y se eligen fuera del ciclo interno con un sexto argumento. Todos los hilos ven el mismo valor, así que todos encuentran el mismo \texttt{omp for}, como exige OpenMP.
+    \item \textbf{Corrección}: comparamos el checksum con 17 dígitos en 13 configuraciones (1 a 32 hilos, los tres schedules, \texttt{privado} y \texttt{atomic}). El error relativo máximo frente a la secuencial fue $3.6 \times 10^{-16}$ (1 ulp), muy por debajo de la tolerancia de $10^{-11}$. Solo cambia el orden de suma: la fuerza sobre $j$ llega repartida entre filas y en otro orden.
 \end{itemize}
 
 % ==============================================================================
@@ -213,10 +229,51 @@ Cada configuración se ejecutó 5 veces ($\geq 3$ exigidas), con $N = 5000$, 10 
 
 % ==============================================================================
 \section{Comparación: Versión Paralela vs. Optimizada}
+\label{sec:comparacion}
 % Responsable: June Herrera
 % ==============================================================================
 %% --- SECCIÓN PARA JUNE HERRERA ---
-\textit{[Aquí June Herrera compara el rendimiento de la paralelización O(N^2) frente a la reducción simétrica O(N^2 / 2) con pairs y analiza el balance de carga].}
+Ambas versiones se midieron intercaladas en una misma batería (\texttt{scripts/run\_experiments.sh}, 5 repeticiones, $N = 5000$, 10 pasos) en una sola máquina: un Intel Core i9-14900HX (8 núcleos P + 16 E, 32 hilos). Es otra máquina que la de la Tabla~\ref{tab:experimentos}, así que solo se comparan tiempos dentro de la Tabla~\ref{tab:comparacion}. Había carga de fondo ($\approx 40$\,\%), pero al intercalar las corridas afecta a las dos versiones por igual. Datos en \texttt{results\_comparacion.csv}.
+
+\begin{table}[h!]
+\centering
+\caption{Paralela directa vs. optimizada (\texttt{privado}). $S_{opt}(p) = T_{opt}(1)/T_{opt}(p)$; cota = $p^2/(2p-1)$, el máximo posible con \texttt{static} por bloques sobre el ciclo triangular.}
+\label{tab:comparacion}
+\small
+\begin{tabular}{@{}cccrrrrr@{}}
+\toprule
+\textbf{$p$} & \textbf{Schedule} & \textbf{Chunk} & \textbf{$\bar{T}_{par}$ (s)} & \textbf{$\bar{T}_{opt}$ (s)} & \textbf{$T_{par}/T_{opt}$} & \textbf{$S_{opt}(p)$} & \textbf{Cota} \\ \midrule
+1 & static & default & 0.886 & 0.466 & 1.90 & 1.00 & 1.00 \\
+2 & static & default & 0.450 & 0.360 & 1.25 & 1.30 & 1.33 \\
+4 & static & default & 0.245 & 0.196 & 1.25 & 2.38 & 2.29 \\
+8 & static & default & 0.155 & 0.111 & 1.40 & 4.21 & 4.27 \\
+8 & static & 8       & 0.155 & 0.084 & 1.85 & 5.54 & -- \\
+8 & static & 64      & 0.153 & 0.083 & 1.84 & 5.59 & -- \\
+8 & dynamic & 8      & 0.133 & 0.070 & 1.91 & 6.70 & -- \\
+8 & dynamic & 64     & 0.136 & 0.067 & \textbf{2.02} & \textbf{6.92} & -- \\
+8 & guided & default & 0.139 & 0.112 & 1.24 & 4.16 & -- \\ \bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Con 1 hilo} la optimizada es $1.90\times$ más rápida, cerca del $2\times$ ideal: hace la mitad de interacciones, pero cada una escribe además en memoria la fuerza de $j$, y al final se suman las filas.
+
+\textbf{Con \texttt{static} por defecto pierde casi toda la ventaja} ($1.25\times$ con 2 y 4 hilos). Con bloques contiguos, el hilo 0 recibe las filas más largas, que equivalen a una fracción $1 - (1 - 1/p)^2 = (2p-1)/p^2$ del trabajo, así que $S_{opt}(p) \le p^2/(2p-1)$. La cota predice 1.33, 2.29 y 4.27, y medimos 1.30, 2.38 y 4.21: el desbalance explica toda la pérdida. \texttt{guided} (4.16) cae en lo mismo, porque su primer bloque, de unas $N/p$ filas, es justamente el más pesado. Con bloques pequeños repartidos (\texttt{static} con chunk 8 o 64) o con asignación dinámica, la carga se equilibra y la optimizada vuelve a ser $1.8$--$2.0\times$ más rápida. En la versión directa el schedule cambiaba el tiempo un 13\,\%; aquí decide si la optimización sirve o no.
+
+\begin{table}[h!]
+\centering
+\caption{Estrategias contra la race condition (\texttt{dynamic}, chunk 64, 3 repeticiones; \texttt{results\_estrategias.csv}).}
+\label{tab:estrategias}
+\small
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+\textbf{Estrategia} & \textbf{1 hilo (s)} & \textbf{8 hilos (s)} & \textbf{$T(1)/T(8)$} \\ \midrule
+Acumuladores privados & 0.454 & \textbf{0.069} & 6.6 \\
+\texttt{atomic}       & 1.903 & 1.625 & 1.2 \\
+\texttt{critical}     & 2.168 & 7.495 & 0.29 \\ \bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Estrategia de sincronización} (Tabla~\ref{tab:estrategias}). \texttt{atomic} es $4.2\times$ más lento que los acumuladores privados aun con un solo hilo: x86 no tiene suma atómica de \texttt{double}, así que cada actualización es un ciclo \texttt{lock cmpxchg}, y hay dos por interacción. Con 8 hilos apenas escala ($1.2\times$), porque todos los hilos escriben \texttt{fx[j]} de los mismos $j$ altos y esas líneas de caché rebotan entre núcleos. \texttt{critical} usa un candado global que serializa las $1.25 \times 10^8$ actualizaciones de la corrida; con 8 hilos tarda $3.5\times$ \emph{más} que con 1, por la contención. Con 8 hilos, ambas son más lentas que la versión secuencial completa (0.886~s). Solo los acumuladores privados conservan la ganancia de la simetría.
 
 % ==============================================================================
 \section{Conclusiones}
@@ -273,6 +330,16 @@ No. Si se toma la fracción no paralelizable medida, $e_{KF} \approx 0.16$--$0.2
 
 \subsection*{Preguntas 5 y 6 [Responsable: June Herrera]}
 %% --- RESPUESTAS JUNE HERRERA ---
-\textit{[Espacio reservado para las respuestas asignadas a June Herrera].}
+\textbf{Pregunta 5. ¿Qué race condition aparece al calcular cada pareja $(i,j)$ una sola vez? ¿Cómo la resolvió?}
+La iteración $i$ suma su contribución a la fuerza de todo $j > i$. Dos hilos que procesan filas distintas $i_1 < i_2$ ejecutan a la vez \texttt{fx[j] -= f} sobre el mismo $j$ (para todo $j > i_2$). Esa instrucción lee, resta y escribe: si los dos hilos leen el mismo valor antes de que alguno escriba, la segunda escritura borra la primera y se pierde la atracción de uno de los pares. \texttt{fx[i]} también es víctima, porque recibe escrituras de todas las filas $i' < i$. No es una carrera teórica: al compilar la variante \texttt{atomic} sin los \texttt{\#pragma omp atomic}, el checksum con 8 hilos se desvió 0.6\,\%, 0.7\,\% y 3.0\,\% en tres corridas, distinto cada vez, un resultado físicamente incorrecto. La resolvimos con \textbf{acumuladores privados por hilo}: cada hilo escribe en su propia fila de \texttt{fx}/\texttt{fy}, nunca en una compartida, y después de la barrera la fuerza de cada cuerpo es la suma de las $p$ filas, calculada en paralelo por cuerpo y fusionada con la integración. La alternativa más corta, \texttt{atomic} o \texttt{critical} sobre cada escritura, también es correcta (checksum dentro de 1 ulp), pero la descartamos por las mediciones de la Tabla~\ref{tab:estrategias}: con 8 hilos es $24\times$ y $109\times$ más lenta, respectivamente.
+
+\textbf{Pregunta 6. ¿La versión con menos operaciones fue siempre la más rápida?}
+No. La optimizada hace la mitad de interacciones, pero eso solo se traduce en tiempo cuando la sincronización es gratis y la carga está equilibrada. Hubo tres casos en que no fue así:
+\begin{enumerate}
+    \item \textbf{Sincronización.} Con \texttt{atomic}, la optimizada con 8 hilos tarda 1.625~s y con \texttt{critical} 7.495~s, frente a 0.136~s de la directa con la misma configuración: $12\times$ y $55\times$ más lenta haciendo la mitad de cálculos. El costo de proteger dos escrituras por interacción (ciclo \texttt{lock cmpxchg}, rebote de líneas de caché o candado global) es mayor que el de la propia interacción, unas 20 operaciones de punto flotante.
+    \item \textbf{Balanceo.} Aun con acumuladores privados, con \texttt{static} por defecto o \texttt{guided} la optimizada fue solo $1.24$--$1.40\times$ más rápida, no $2\times$, porque el hilo con las filas largas retiene a los demás en la barrera (Tabla~\ref{tab:comparacion}).
+    \item \textbf{Overhead de la reducción.} Los acumuladores privados agregan $\mathcal{O}(pN)$ sumas y $p \times N$ memoria por paso, y escriben en memoria la fuerza de $j$ en cada interacción. Por eso, incluso con 1 hilo, la ganancia es $1.90\times$ y no $2\times$. Ese costo crece con $p$ y no con $N^2$, así que con muchos hilos y $N$ pequeño pesaría más.
+\end{enumerate}
+Con \texttt{dynamic} y acumuladores privados se recupera la ganancia completa: $2.02\times$ sobre la directa con la misma configuración. Menos operaciones solo garantizan menos tiempo si no se pagan en sincronización ni en desbalance.
 
 \end{document}

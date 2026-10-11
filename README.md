@@ -73,6 +73,12 @@ make bin/nbody_seq
    gcc -O2 -fopenmp nbody_paralelo.c -o nbody_paralelo -lm           # entregable Canvas
    ```
 
+4. **Compilar la versión optimizada por pares (Persona C):**
+   ```bash
+   gcc -O2 -fopenmp src/nbody_optimized.c -o bin/nbody_optimized -lm  # desarrollo
+   gcc -O2 -fopenmp nbody_optimized.c -o nbody_optimized -lm          # entregable (autónomo)
+   ```
+
 ---
 
 ## 4. Instrucciones de Ejecución y Parámetros
@@ -113,6 +119,13 @@ Los ejecutables aceptan hasta 5 argumentos posicionales por línea de comandos:
   ./nbody_paralelo 5000 10 8 static 0
   ```
 
+- **Versión optimizada** (simetría de pares, $N(N-1)/2$ interacciones por paso). Acepta un 6.º argumento opcional con la estrategia para resolver la race condition: `privado` (por defecto, acumuladores por hilo), `atomic` o `critical`:
+  ```bash
+  ./bin/nbody_optimized 5000 10 8 dynamic 64            # privado
+  ./bin/nbody_optimized 5000 10 8 dynamic 64 atomic     # solo para comparar
+  ```
+  El ciclo triangular tiene carga desigual: `static` sin chunk deja al hilo 0 con las filas más largas. Usar `dynamic` (o `static` con chunk pequeño).
+
 ### Experimentos de rendimiento (Persona B)
 
 ```bash
@@ -123,6 +136,7 @@ python scripts/analyze_results.py        # -> results_summary.csv, docs/tabla_ex
 - `run_experiments.sh` compila desde cero, hace una corrida de calentamiento que se descarta y ejecuta la secuencial y las configuraciones paralelas (1/2/4/8 hilos con `static`; con 8 hilos `static` chunk 8/64, `dynamic` 8/64 y `guided`). Las repeticiones se **intercalan** (ronda 1 de todas las configuraciones, luego ronda 2, …) para que la deriva térmica afecte a todas por igual. Si existe `src/nbody_optimized.c`, también lo mide.
 - `results.csv` guarda **cada corrida** (columna `rep`). `analyze_results.py` calcula el promedio, la desviación estándar, $S(p)=T_1/T_p$, $E(p)=S(p)/p$, la fracción serial de Karp-Flatt y el error del checksum frente al secuencial.
 - En laptop: conectar el cargador y cerrar otros programas antes de medir.
+- `results_comparacion.csv`: misma batería con la versión paralela y la optimizada intercaladas, medida en una sola máquina (i9-14900HX) para la comparación parallel vs. optimized. `results_estrategias.csv`: `privado` vs. `atomic` vs. `critical` con 1 y 8 hilos (3 repeticiones).
 
 ---
 

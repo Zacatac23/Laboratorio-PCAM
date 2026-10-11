@@ -1,0 +1,19 @@
+rep,version,N,steps,seed,threads_req,threads_used,schedule,chunk,procs,max_threads,time_sec,checksum
+1,nbody_optimizado_privado (C),5000,10,42,1,1,dynamic,64,32,1,0.469000,-4.0266058332e+04
+1,nbody_optimizado_atomic (C),5000,10,42,1,1,dynamic,64,32,1,1.929000,-4.0266058332e+04
+1,nbody_optimizado_critical (C),5000,10,42,1,1,dynamic,64,32,1,2.145000,-4.0266058332e+04
+1,nbody_optimizado_privado (C),5000,10,42,8,8,dynamic,64,32,8,0.070000,-4.0266058332e+04
+1,nbody_optimizado_atomic (C),5000,10,42,8,8,dynamic,64,32,8,1.648000,-4.0266058332e+04
+1,nbody_optimizado_critical (C),5000,10,42,8,8,dynamic,64,32,8,7.477000,-4.0266058332e+04
+2,nbody_optimizado_privado (C),5000,10,42,1,1,dynamic,64,32,1,0.449000,-4.0266058332e+04
+2,nbody_optimizado_atomic (C),5000,10,42,1,1,dynamic,64,32,1,1.886000,-4.0266058332e+04
+2,nbody_optimizado_critical (C),5000,10,42,1,1,dynamic,64,32,1,2.187000,-4.0266058332e+04
+2,nbody_optimizado_privado (C),5000,10,42,8,8,dynamic,64,32,8,0.067000,-4.0266058332e+04
+2,nbody_optimizado_atomic (C),5000,10,42,8,8,dynamic,64,32,8,1.594000,-4.0266058332e+04
+2,nbody_optimizado_critical (C),5000,10,42,8,8,dynamic,64,32,8,7.590000,-4.0266058332e+04
+3,nbody_optimizado_privado (C),5000,10,42,1,1,dynamic,64,32,1,0.445000,-4.0266058332e+04
+3,nbody_optimizado_atomic (C),5000,10,42,1,1,dynamic,64,32,1,1.894000,-4.0266058332e+04
+3,nbody_optimizado_critical (C),5000,10,42,1,1,dynamic,64,32,1,2.171000,-4.0266058332e+04
+3,nbody_optimizado_privado (C),5000,10,42,8,8,dynamic,64,32,8,0.071000,-4.0266058332e+04
+3,nbody_optimizado_atomic (C),5000,10,42,8,8,dynamic,64,32,8,1.633000,-4.0266058332e+04
+3,nbody_optimizado_critical (C),5000,10,42,8,8,dynamic,64,32,8,7.419000,-4.0266058332e+04
